@@ -1,0 +1,99 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
+ENV/
+env/
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+myvenv/
+env/
+pythonenv/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Jupyter / Notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDEs / Editors
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Build / Distribution
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Cache / Temp
+# =========================
+.cache/
+pytest_cache/
+.mypy_cache/
+
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+
+# =========================
+# FastAPI / Uvicorn
+# =========================
+*.sqlite3
+*.db
+
+# =========================
+# LangChain / Vector DBs
+# =========================
+faiss_index/
+chroma/
+vectorstore/
+
+# =========================
+# PDFs / Generated Files
+# =========================
+outputs/
+generated/
+uploads/
+
+# =========================
+# API Keys / Credentials
+# =========================
+*.pem
+*.key
+credentials.json
