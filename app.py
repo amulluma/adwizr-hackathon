@@ -8,6 +8,8 @@ import streamlit as st
 from openai import OpenAI
 import json
 import re
+import os
+from dotenv import load_dotenv
 from calculations import (
     RetirementInputs,
     RetirementResult,
@@ -17,6 +19,9 @@ from calculations import (
     format_currency,
     generate_excel_plan
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -210,6 +215,46 @@ st.markdown("""
     [data-testid="stChatMessage"] {
         background-color: #1a1a1a;
         border: 1px solid #333333;
+    }
+
+    /* Chat input container */
+    [data-testid="stChatInput"] {
+        background-color: #1a1a1a !important;
+    }
+
+    /* Chat input text area */
+    [data-testid="stChatInput"] textarea {
+        background-color: #222222 !important;
+        color: #E8E8E8 !important;
+        border: 1px solid #8B8D98 !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stChatInput"] textarea:focus {
+        border-color: #D1A36C !important;
+        box-shadow: 0 0 0 1px #D1A36C !important;
+    }
+    [data-testid="stChatInput"] textarea::placeholder {
+        color: #8B8D98 !important;
+    }
+
+    /* Chat input submit button */
+    [data-testid="stChatInput"] button {
+        background-color: #D1A36C !important;
+        color: #111111 !important;
+    }
+    [data-testid="stChatInput"] button:hover {
+        background-color: #b8905d !important;
+    }
+
+    /* Bottom chat input container styling */
+    .stChatInput {
+        background-color: #111111 !important;
+    }
+    [data-testid="stBottom"] {
+        background-color: #111111 !important;
+    }
+    [data-testid="stBottomBlockContainer"] {
+        background-color: #111111 !important;
     }
 
     /* Input fields */
@@ -499,12 +544,16 @@ def init_session_state():
     if "whatif_mode" not in st.session_state:
         st.session_state.whatif_mode = False
 
+    if "followup_messages" not in st.session_state:
+        st.session_state.followup_messages = []
+
 
 def get_openai_client():
-    """Get or create OpenAI client"""
-    api_key = st.session_state.get("api_key", "")
-    if api_key and st.session_state.openai_client is None:
-        st.session_state.openai_client = OpenAI(api_key=api_key)
+    """Get or create OpenAI client from environment variable"""
+    if st.session_state.openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            st.session_state.openai_client = OpenAI(api_key=api_key)
     return st.session_state.openai_client
 
 
@@ -512,7 +561,7 @@ def chat_with_gpt(messages: list, system_prompt: str = SYSTEM_PROMPT) -> str:
     """Send messages to GPT-4o and get response"""
     client = get_openai_client()
     if not client:
-        return "Please enter your OpenAI API key in the sidebar to continue."
+        return "Error: OpenAI API key not found. Please add OPENAI_API_KEY to your .env file."
 
     try:
         response = client.chat.completions.create(
@@ -566,6 +615,136 @@ def perform_calculation(data: dict):
 
     result = calculate_retirement_plan(inputs)
     return result, inputs
+
+
+# Follow-up chat system prompt
+FOLLOWUP_SYSTEM_PROMPT = """
+You are a helpful retirement planning assistant. The user has already completed their retirement plan and now has follow-up questions.
+
+## CONTEXT - USER'S RETIREMENT PLAN
+{plan_context}
+
+## YOUR ROLE
+1. Answer questions about the retirement plan results
+2. Explain calculations and assumptions in simple terms
+3. Handle what-if scenario questions (e.g., "What if I retire at 58?")
+4. Provide general retirement planning guidance
+5. Be transparent about limitations
+
+## WHAT-IF SCENARIO HANDLING
+When users ask what-if questions about retirement age:
+- Calculate the new scenario using the same assumptions
+- Present comparison: Base Plan vs What-If
+- Explain why the numbers changed
+- Use this format:
+
+**Base Plan (Retire at {base_age}):**
+- Monthly SIP: {base_sip}
+
+**What-if: Retire at {new_age}:**
+- Monthly SIP: {new_sip}
+- Difference: {difference}
+- Reason: [Shorter/Longer] accumulation period
+
+## RULES
+1. Stay focused on the user's specific plan
+2. Don't recommend specific products or funds
+3. Always mention that these are estimates based on assumptions
+4. If asked about complex tax/legal matters, suggest consulting a professional
+5. Be helpful, clear, and concise
+
+## AVAILABLE DATA
+You have access to all the plan details shown in the context above. Use specific numbers when answering questions.
+"""
+
+
+def get_plan_context(result: RetirementResult, inputs: RetirementInputs) -> str:
+    """Generate context string for follow-up chat"""
+    return f"""
+RETIREMENT PLAN DETAILS:
+- Current Age: {result.current_age} years
+- Retirement Age: {result.retirement_age} years
+- Life Expectancy: {result.life_expectancy} years
+- Years to Retirement: {result.years_to_retirement} years
+- Retirement Duration: {result.retirement_duration} years
+- Risk Profile: {result.risk_profile.capitalize()}
+
+FINANCIAL DETAILS:
+- Current Annual Expenses: {format_currency(result.current_annual_expenses)}
+- Current Annual Income: {format_currency(result.current_annual_income) if result.current_annual_income > 0 else 'Not provided'}
+- Current Investments: {format_currency(inputs.current_investments)}
+- Living Expenses at Retirement: {format_currency(result.future_annual_expenses)}/year
+- Corpus Required: {format_currency(result.corpus_required)}
+- Future Value of Current Investments: {format_currency(result.future_investment_value)}
+- Corpus Gap: {format_currency(result.corpus_gap)}
+- Monthly SIP Required: {format_currency(result.monthly_savings_rounded)}
+
+ASSUMPTIONS:
+- Inflation Rate: {result.inflation_rate * 100:.0f}% per annum
+- Expected Return Rate: {result.expected_return_rate * 100:.0f}% per annum
+- Same return rate applied pre- and post-retirement
+- Constant monthly SIP (no step-ups)
+"""
+
+
+def chat_followup(user_message: str, result: RetirementResult, inputs: RetirementInputs) -> str:
+    """Handle follow-up chat questions about the retirement plan"""
+    client = get_openai_client()
+    if not client:
+        return "Error: OpenAI API key not found."
+
+    # Build context-aware system prompt
+    plan_context = get_plan_context(result, inputs)
+    system_prompt = FOLLOWUP_SYSTEM_PROMPT.format(
+        plan_context=plan_context,
+        base_age=result.retirement_age,
+        base_sip=format_currency(result.monthly_savings_rounded),
+        new_age="{user_specified_age}",
+        new_sip="{calculated_sip}",
+        difference="{calculated_difference}"
+    )
+
+    # Check if user is asking about a specific retirement age
+    age_match = re.search(r'retire\s*(?:at|when|by)?\s*(\d{2})', user_message.lower())
+    if age_match:
+        new_age = int(age_match.group(1))
+        if new_age > inputs.current_age and new_age != result.retirement_age:
+            whatif_result = calculate_whatif_scenario(inputs, new_age)
+            diff = whatif_result.monthly_savings_rounded - result.monthly_savings_rounded
+            diff_sign = "+" if diff > 0 else ""
+            reason = "shorter accumulation period and longer retirement" if new_age < result.retirement_age else "longer accumulation period and shorter retirement"
+
+            whatif_info = f"""
+
+WHAT-IF CALCULATION RESULT:
+- New Retirement Age: {new_age}
+- New Monthly SIP Required: {format_currency(whatif_result.monthly_savings_rounded)}
+- Difference from Base Plan: {diff_sign}{format_currency(abs(diff))}
+- New Corpus Required: {format_currency(whatif_result.corpus_required)}
+- Reason: {reason}
+"""
+            system_prompt += whatif_info
+
+    # Build messages for API call
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # Add conversation history
+    for msg in st.session_state.followup_messages:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Add current user message
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 def display_goal_summary(result: RetirementResult, inputs: RetirementInputs):
@@ -804,7 +983,7 @@ def display_result_card(result: RetirementResult, inputs: RetirementInputs):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-        st.caption("The Excel file contains editable inputs and pre-calculated what-if scenarios.")
+        st.caption("Editable spreadsheet with inputs, calculations, and what-if scenarios.")
     else:
         st.warning("Excel export requires pandas and openpyxl. Install with: pip install pandas openpyxl")
 
@@ -817,6 +996,7 @@ def reset_chat():
     st.session_state.inputs = None
     st.session_state.collected_data = None
     st.session_state.whatif_mode = False
+    st.session_state.followup_messages = []
 
 
 def main():
@@ -835,16 +1015,12 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ Settings")
 
-        # API Key input
-        api_key = st.text_input(
-            "OpenAI API Key",
-            type="password",
-            value=st.session_state.get("api_key", ""),
-            help="Enter your OpenAI API key to use GPT-4o"
-        )
+        # Check API key status
+        api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
-            st.session_state.api_key = api_key
-            st.session_state.openai_client = None  # Reset client to use new key
+            st.success("✓ API Key loaded from .env")
+        else:
+            st.error("✗ API Key not found in .env")
 
         st.markdown("---")
 
@@ -858,11 +1034,11 @@ def main():
         # Info section
         st.markdown("### 📖 How it works")
         st.markdown("""
-        1. Enter your OpenAI API key
-        2. Chat with the assistant
-        3. Answer questions one at a time
-        4. Get your personalized plan
-        5. Download Excel for what-if analysis
+        1. Chat with the assistant
+        2. Answer questions one at a time
+        3. Get your personalized plan
+        4. Ask follow-up questions
+        5. Download PDF/Excel reports
         """)
 
         st.markdown("---")
@@ -889,31 +1065,30 @@ def main():
         - **Aggressive return:** 15%
         """)
 
-    # Check for API key
-    if not st.session_state.get("api_key"):
-        st.warning("👈 Please enter your OpenAI API key in the sidebar to start")
+    # Check for API key from environment
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("⚠️ OpenAI API Key not found!")
         st.markdown("""
-        ### Getting Started
+        ### Setup Required
 
-        1. Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-        2. Enter it in the sidebar
-        3. Start chatting to plan your retirement!
+        Please create a `.env` file in the project directory with your OpenAI API key:
+
+        ```
+        OPENAI_API_KEY=your_api_key_here
+        ```
+
+        You can get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
 
         ---
 
-        ### What the Assistant Will Ask
+        ### What This App Does
 
-        The assistant will guide you through collecting:
-        - Your current age
-        - When you want to retire (55-65 recommended)
-        - How long your savings should last
-        - Who you'll support in retirement
-        - Your current living expenses
-        - Your existing investments
-        - Your risk tolerance
-        - Your current income
-
-        Each question is asked one at a time for clarity.
+        Once configured, the assistant will guide you through:
+        - Collecting your retirement planning details
+        - Calculating your required retirement corpus
+        - Determining your monthly SIP amount
+        - Exploring what-if scenarios
+        - Downloading PDF/Excel reports
         """)
         return
 
@@ -960,8 +1135,9 @@ Let's begin! **What is your current age?** (You can also share your date of birt
         })
         st.rerun()
 
-    # Chat input
+    # Chat input - different behavior based on state
     if not st.session_state.calculation_done:
+        # Initial data collection phase
         if prompt := st.chat_input("Type your answer here..."):
             # Add user message
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -987,7 +1163,47 @@ Let's begin! **What is your current age?** (You can also share your date of birt
 
             st.rerun()
     else:
-        st.info("🎉 Your retirement plan is ready! Scroll up to view it, or click 'Start New Plan' in the sidebar to create a new plan.")
+        # Follow-up chat phase - dashboard is ready
+        st.markdown("---")
+        st.markdown('<h3 style="color: #D1A36C;">💬 Ask Follow-up Questions</h3>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="info-box">
+            <strong>You can ask about:</strong><br>
+            • What-if scenarios (e.g., "What if I retire at 58?")<br>
+            • Explanations of any calculation<br>
+            • How to achieve your goals<br>
+            • Impact of changing assumptions
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Display follow-up conversation
+        for msg in st.session_state.followup_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # Follow-up chat input
+        if followup_prompt := st.chat_input("Ask a follow-up question..."):
+            # Add user message to followup
+            st.session_state.followup_messages.append({
+                "role": "user",
+                "content": followup_prompt
+            })
+
+            # Get follow-up response
+            with st.spinner("Thinking..."):
+                response = chat_followup(
+                    followup_prompt,
+                    st.session_state.result,
+                    st.session_state.inputs
+                )
+
+            # Add assistant response
+            st.session_state.followup_messages.append({
+                "role": "assistant",
+                "content": response
+            })
+
+            st.rerun()
 
 
 if __name__ == "__main__":
