@@ -321,6 +321,7 @@ st.markdown("""
 # System prompt based on the updated specification
 SYSTEM_PROMPT = """
 # SYSTEM PROMPT
+Today is 03 feb 2026
 
 **Goal Planning Assistant (Retirement Only)**
 **Excel-Wired | Conversation-Driven | Deterministic**
